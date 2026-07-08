@@ -28,14 +28,10 @@
     flex-shrink: 0;
   }
 
-  .logo {
-    font-size: 22px;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-    color: #ffffff;
+  .logo img {
+    height: 40px;
+    object-fit: contain;
   }
-
-  .logo span { color: #4ade80; }
 
   .clock {
     font-size: 18px;
@@ -156,7 +152,6 @@
 
   .col-done .card-pulse { background: #4ade80; }
 
-  /* Timer bar pe cardul finalizat — arata cat timp a ramas */
   .card-timer {
     position: absolute;
     bottom: 0;
@@ -175,12 +170,8 @@
     animation: card-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .card-expiring {
-    opacity: 0.4;
-    border-color: #1a1a1a !important;
-  }
-
-  .card-expiring .card-plate { color: #333 !important; }
+  .card-expiring .card-plate { color: #1a4d2a !important; }
+  .card-expiring { border-color: #111 !important; }
 
   @keyframes card-in {
     from { opacity: 0; transform: scale(0.85); }
@@ -200,7 +191,6 @@
     height: 2px;
     background: #1e1e1e;
     flex-shrink: 0;
-    position: relative;
     overflow: hidden;
   }
 
@@ -215,7 +205,9 @@
 <body>
 
 <header>
-  <div class="logo">4<span>Seasons</span></div>
+  <div class="logo">
+    <img src="Asset 8.png" alt="4Seasons">
+  </div>
   <div class="clock" id="clock">--:--:--</div>
 </header>
 
@@ -249,8 +241,12 @@
 
 <script>
   const API_URL = "https://script.google.com/macros/s/AKfycbys3S-cKYdnbHeBZO4csfI5iBduOsUgXtclsAK4JYVj2sW0HRhD4yDfZelCHXAUp9oSCQ/exec";
-  const REFRESH_INTERVAL = 15000;   // refresh date la 15 secunde
-  const EXPIRE_MINUTES   = 10;      // cardurile Finalizat dispar dupa 10 minute
+  const REFRESH_INTERVAL = 15000;
+  const EXPIRE_MS = 5 * 60 * 1000; // 5 minute in milliseconds
+
+  // Timer intern — stocam ora EXACTA cand am vazut prima data fiecare masina ca "Finalizat"
+  // Complet independent de SMS, de coloana I, de orice eroare din script
+  const finalizedAt = {};
 
   // ——— CEAS ———
   function updateClock() {
@@ -263,7 +259,7 @@
   setInterval(updateClock, 1000);
   updateClock();
 
-  // ——— PROGRESS BAR REFRESH ———
+  // ——— PROGRESS BAR ———
   function animateProgress() {
     const bar = document.getElementById('refresh-progress');
     bar.style.transition = 'none';
@@ -274,34 +270,19 @@
     }, 50);
   }
 
-  // ——— PARSEAZA TIMESTAMP DIN COLOANA I ———
-  // Formatul din script: "SMS trimis ✓ — 24.06.2026 23:58"
-  function parseTimestamp(logVal) {
-    if (!logVal || logVal.indexOf('SMS trimis') === -1) return null;
-    // Extragem data si ora din string
-    const match = logVal.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
-    if (!match) return null;
-    const [_, zi, luna, an, ora, min] = match;
-    return new Date(an, luna - 1, zi, ora, min, 0);
-  }
-
-  // ——— VERIFICA DACA CARDUL A EXPIRAT (10 min) ———
-  function esteExpirat(logVal) {
-    const ts = parseTimestamp(logVal);
-    if (!ts) return false;
-    const acum = new Date();
-    const difMin = (acum - ts) / 1000 / 60;
-    return difMin >= EXPIRE_MINUTES;
-  }
-
-  // ——— CALCULEAZA PROCENTUL RAMAS DIN 10 MINUTE ———
-  function procentRamas(logVal) {
-    const ts = parseTimestamp(logVal);
+  // ——— PROCENT RAMAS DIN 5 MINUTE ———
+  function procentRamas(plate) {
+    const ts = finalizedAt[plate];
     if (!ts) return 100;
-    const acum = new Date();
-    const difMin = (acum - ts) / 1000 / 60;
-    const procent = Math.max(0, 100 - (difMin / EXPIRE_MINUTES * 100));
-    return procent;
+    const elapsed = Date.now() - ts;
+    return Math.max(0, 100 - (elapsed / EXPIRE_MS * 100));
+  }
+
+  // ——— E EXPIRAT? ———
+  function esteExpirat(plate) {
+    const ts = finalizedAt[plate];
+    if (!ts) return false;
+    return (Date.now() - ts) >= EXPIRE_MS;
   }
 
   // ——— RENDER CARDURI ———
@@ -309,9 +290,9 @@
     const grid  = document.getElementById(gridId);
     const count = document.getElementById(countId);
 
-    // Filtram expiratele din coloana Finalizat
+    // Filtram expiratele din Finalizat
     const visible = isDone
-      ? items.filter(i => !esteExpirat(i.log))
+      ? items.filter(i => !esteExpirat(i.nrAuto))
       : items;
 
     count.textContent = visible.length;
@@ -321,11 +302,9 @@
       return;
     }
 
-    // Stergem empty state
     const empty = grid.querySelector('.empty-state');
     if (empty) empty.remove();
 
-    // Plates curente pe ecran
     const existingPlates = new Set(
       Array.from(grid.querySelectorAll('.card')).map(c => c.dataset.plate)
     );
@@ -336,7 +315,13 @@
         card.style.transition = 'opacity 0.5s, transform 0.5s';
         card.style.opacity = '0';
         card.style.transform = 'scale(0.8)';
-        setTimeout(() => card.remove(), 500);
+        setTimeout(() => {
+          card.remove();
+          if (grid.querySelectorAll('.card').length === 0) {
+            grid.innerHTML = '<div class="empty-state">Nicio mașină</div>';
+            document.getElementById(countId).textContent = '0';
+          }
+        }, 500);
       }
     });
 
@@ -346,10 +331,9 @@
         const card = document.createElement('div');
         card.className = 'card card-new';
         card.dataset.plate = item.nrAuto;
-        card.dataset.log   = item.log || '';
 
         const timerHtml = isDone
-          ? `<div class="card-timer" style="width:${procentRamas(item.log)}%"></div>`
+          ? `<div class="card-timer" style="width:100%"></div>`
           : '';
 
         card.innerHTML = `
@@ -358,28 +342,28 @@
           ${timerHtml}
         `;
         grid.appendChild(card);
-      } else if (isDone) {
-        // Actualizam timer bar pe cardurile existente
-        const card = grid.querySelector(`[data-plate="${item.nrAuto}"]`);
-        if (card) {
-          const timerBar = card.querySelector('.card-timer');
-          if (timerBar) {
-            timerBar.style.width = procentRamas(item.log) + '%';
-          }
-          // Fadem cardul daca e aproape de expirare (sub 20%)
-          if (procentRamas(item.log) < 20) {
-            card.classList.add('card-expiring');
-          }
-        }
       }
     });
   }
 
-  // ——— FETCH DATE DIN SHEETS ———
+  // ——— FETCH DATE ———
   async function fetchData() {
     try {
       const resp = await fetch(API_URL + '?t=' + Date.now());
       const data = await resp.json();
+
+      const now = Date.now();
+
+      // Inregistram ora EXACTA cand vedem prima data o masina ca Finalizat
+      data.forEach(item => {
+        if (item.status === 'Finalizat' && !finalizedAt[item.nrAuto]) {
+          finalizedAt[item.nrAuto] = now;
+        }
+        // Daca masina s-a intors la "In asteptare" — resetam timerul
+        if (item.status === 'In asteptare' && finalizedAt[item.nrAuto]) {
+          delete finalizedAt[item.nrAuto];
+        }
+      });
 
       const waiting = data.filter(d => d.status === 'In asteptare');
       const done    = data.filter(d => d.status === 'Finalizat');
@@ -401,18 +385,22 @@
     animateProgress();
   }, REFRESH_INTERVAL);
 
-  // Actualizam timer bars la fiecare secunda (fara fetch)
+  // Actualizam timer bars la fiecare secunda
   setInterval(() => {
     document.querySelectorAll('#grid-done .card').forEach(card => {
-      const log = card.dataset.log || '';
+      const plate = card.dataset.plate;
       const timerBar = card.querySelector('.card-timer');
+
       if (timerBar) {
-        const procent = procentRamas(log);
+        const procent = procentRamas(plate);
         timerBar.style.width = procent + '%';
-        if (procent < 20) card.classList.add('card-expiring');
+        if (procent < 20) {
+          card.classList.add('card-expiring');
+        }
       }
-      // Daca a expirat → scoatem cardul
-      if (esteExpirat(log)) {
+
+      // Daca a expirat → scoatem cu animatie
+      if (esteExpirat(plate)) {
         card.style.transition = 'opacity 0.5s, transform 0.5s';
         card.style.opacity = '0';
         card.style.transform = 'scale(0.8)';
