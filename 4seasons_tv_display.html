@@ -65,6 +65,7 @@
 </div>
 
 <div class="refresh-bar"><div class="refresh-progress" id="refresh-progress"></div></div>
+<div style="position:fixed;bottom:6px;left:8px;font-size:9px;color:#333;font-family:monospace">v10</div>
 
 <script>
   const API_URL = "https://script.google.com/macros/s/AKfycbys3S-cKYdnbHeBZO4csfI5iBduOsUgXtclsAK4JYVj2sW0HRhD4yDfZelCHXAUp9oSCQ/exec";
@@ -96,13 +97,18 @@
     setTimeout(() => { bar.style.transition = 'width ' + REFRESH_INTERVAL + 'ms linear'; bar.style.width = '100%'; }, 50);
   }
 
-  // Parseaza timestamp din coloana J: "2026-07-09 08:07:18"
+  // Parseaza timestamp din coloana J — accepta ORICE format
   function parseFinalizat(str) {
-  if (!str) return null;
-  const d = new Date(str);
-  if (isNaN(d.getTime())) return null;
-  return d.getTime();
-}
+    if (!str) return null;
+    // Format text curat: 2026-07-09 08:17:41
+    const m = str.match(/(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})/);
+    if (m) {
+      return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+    }
+    // Fallback: orice format de data (inclusiv cel lung cu GMT)
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) return d.getTime();
+    return null;
   }
 
   // Cate ms au trecut de la finalizarea REALA
