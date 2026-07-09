@@ -65,7 +65,7 @@
 </div>
 
 <div class="refresh-bar"><div class="refresh-progress" id="refresh-progress"></div></div>
-<div style="position:fixed;bottom:6px;left:8px;font-size:9px;color:#333;font-family:monospace">v10</div>
+<div style="position:fixed;bottom:6px;left:8px;font-size:9px;color:#333;font-family:monospace">v11</div>
 
 <script>
   const API_URL = "https://script.google.com/macros/s/AKfycbys3S-cKYdnbHeBZO4csfI5iBduOsUgXtclsAK4JYVj2sW0HRhD4yDfZelCHXAUp9oSCQ/exec";
@@ -97,25 +97,11 @@
     setTimeout(() => { bar.style.transition = 'width ' + REFRESH_INTERVAL + 'ms linear'; bar.style.width = '100%'; }, 50);
   }
 
-  // Parseaza timestamp din coloana J — accepta ORICE format
-  function parseFinalizat(str) {
-    if (!str) return null;
-    // Format text curat: 2026-07-09 08:17:41
-    const m = str.match(/(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})/);
-    if (m) {
-      return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
-    }
-    // Fallback: orice format de data (inclusiv cel lung cu GMT)
-    const d = new Date(str);
-    if (!isNaN(d.getTime())) return d.getTime();
-    return null;
-  }
-
-  // Cate ms au trecut de la finalizarea REALA
-  function msDeLaFinalizare(finalizatStr) {
-    const ts = parseFinalizat(finalizatStr);
-    if (!ts) return null;
-    return Date.now() - ts;
+  // finalizatMs vine ca NUMAR (milisecunde) direct din script.
+  // Zero parsare, zero fusuri orare, zero formate. Comparam doua numere.
+  function msDeLaFinalizare(finalizatMs) {
+    if (!finalizatMs || finalizatMs === 0) return null;
+    return Date.now() - finalizatMs;
   }
 
   function render(waiting, done) {
@@ -132,7 +118,7 @@
     gd.innerHTML = done.length === 0
       ? '<div class="empty-state">Nicio mașină</div>'
       : done.map(item => {
-          const elapsed = msDeLaFinalizare(item.finalizat);
+          const elapsed = msDeLaFinalizare(item.finalizatMs);
           let procent = 100;
           if (elapsed !== null) procent = Math.max(0, 100 - (elapsed / EXPIRE_MS * 100));
           const expClass = procent < 20 ? ' card-expiring' : '';
@@ -150,18 +136,18 @@
         .filter(d => d.status === 'In asteptare' && (d.nrAuto || '').trim() !== '')
         .map(d => d.nrAuto.trim());
 
-      // FINALIZAT — status Finalizat SI nu a expirat (calcul din coloana J)
+      // FINALIZAT — status Finalizat SI nu a expirat (calcul din numar ms)
       const done = data
         .filter(d => {
           if (d.status !== 'Finalizat') return false;
           if ((d.nrAuto || '').trim() === '') return false;
-          const elapsed = msDeLaFinalizare(d.finalizat);
-          // Daca nu are timestamp in J → o aratam (fallback), dar cu timer plin
+          const elapsed = msDeLaFinalizare(d.finalizatMs);
+          // Fara timestamp → o aratam cu timer plin (fallback)
           if (elapsed === null) return true;
-          // Daca a trecut peste 5 min de la finalizarea reala → NU o aratam
+          // Peste 5 min de la finalizare → NU o aratam
           return elapsed < EXPIRE_MS;
         })
-        .map(d => ({ nrAuto: d.nrAuto.trim(), finalizat: d.finalizat }));
+        .map(d => ({ nrAuto: d.nrAuto.trim(), finalizatMs: d.finalizatMs }));
 
       render(waiting, done);
     } catch (err) {
