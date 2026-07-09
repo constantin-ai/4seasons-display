@@ -30,9 +30,6 @@
   .col-waiting .card-pulse { animation: pulse-amber 2s infinite; }
   .card-timer { position: absolute; bottom: 0; left: 0; height: 3px; background: #4ade80; }
   @keyframes pulse-amber { 0%,100% { opacity: 1; transform: scale(1);} 50% { opacity: .4; transform: scale(.8);} }
-  .card-new { animation: card-in .4s cubic-bezier(.16,1,.3,1); }
-  .card-expiring .card-plate { color: #1a4d2a !important; }
-  @keyframes card-in { from { opacity: 0; transform: scale(.85);} to { opacity: 1; transform: scale(1);} }
   .empty-state { color: #2a2a2a; font-size: 14px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding-top: 8px; }
   .refresh-bar { height: 2px; background: #1e1e1e; flex-shrink: 0; overflow: hidden; }
   .refresh-progress { height: 100%; background: #4ade80; width: 0%; transition: width linear; }
@@ -65,7 +62,7 @@
 </div>
 
 <div class="refresh-bar"><div class="refresh-progress" id="refresh-progress"></div></div>
-<div style="position:fixed;bottom:6px;left:8px;font-size:9px;color:#333;font-family:monospace">v11</div>
+<div style="position:fixed;bottom:6px;left:8px;font-size:9px;color:#333;font-family:monospace">v12</div>
 
 <script>
   const API_URL = "https://script.google.com/macros/s/AKfycbys3S-cKYdnbHeBZO4csfI5iBduOsUgXtclsAK4JYVj2sW0HRhD4yDfZelCHXAUp9oSCQ/exec";
@@ -74,9 +71,9 @@
   const AUTO_RELOAD_MS = 2 * 60 * 60 * 1000;
 
   // ═══════════════════════════════════════════════════════
-  //  TIMPUL DE EXPIRARE VINE DIN SHEETS (coloana J), NU DIN BROWSER
-  //  O masina finalizata acum 3 ore e DEJA expirata.
-  //  La redeschidere NU reapare. Complet automat.
+  //  Scriptul trimite finalizatMs = numarul de milisecunde
+  //  al momentului de finalizare. Comparam direct cu Date.now().
+  //  Daca au trecut > 5 min → masina NU se afiseaza. Simplu.
   // ═══════════════════════════════════════════════════════
 
   setInterval(() => {
@@ -97,11 +94,11 @@
     setTimeout(() => { bar.style.transition = 'width ' + REFRESH_INTERVAL + 'ms linear'; bar.style.width = '100%'; }, 50);
   }
 
-  // finalizatMs vine ca NUMAR (milisecunde) direct din script.
-  // Zero parsare, zero fusuri orare, zero formate. Comparam doua numere.
-  function msDeLaFinalizare(finalizatMs) {
-    if (!finalizatMs || finalizatMs === 0) return null;
-    return Date.now() - finalizatMs;
+  // Procent ramas din 5 min pe baza finalizatMs
+  function procentRamas(finalizatMs) {
+    if (!finalizatMs) return 100;
+    const elapsed = Date.now() - finalizatMs;
+    return Math.max(0, 100 - (elapsed / EXPIRE_MS * 100));
   }
 
   function render(waiting, done) {
@@ -112,17 +109,14 @@
       ? '<div class="empty-state">Nicio mașină</div>'
       : waiting.map(p => `<div class="card"><div class="card-pulse" style="background:#f59e0b"></div><div class="card-plate" style="color:#fff">${p}</div></div>`).join('');
 
-    // FINALIZAT — cu timer real din coloana J
+    // FINALIZAT
     const gd = document.getElementById('grid-done');
     document.getElementById('count-done').textContent = done.length;
     gd.innerHTML = done.length === 0
       ? '<div class="empty-state">Nicio mașină</div>'
       : done.map(item => {
-          const elapsed = msDeLaFinalizare(item.finalizatMs);
-          let procent = 100;
-          if (elapsed !== null) procent = Math.max(0, 100 - (elapsed / EXPIRE_MS * 100));
-          const expClass = procent < 20 ? ' card-expiring' : '';
-          return `<div class="card${expClass}"><div class="card-pulse" style="background:#4ade80"></div><div class="card-plate" style="color:#4ade80">${item.nrAuto}</div><div class="card-timer" style="width:${procent}%"></div></div>`;
+          const pr = procentRamas(item.finalizatMs);
+          return `<div class="card"><div class="card-pulse" style="background:#4ade80"></div><div class="card-plate" style="color:#4ade80">${item.nrAuto}</div><div class="card-timer" style="width:${pr}%"></div></div>`;
         }).join('');
   }
 
@@ -130,22 +124,22 @@
     try {
       const resp = await fetch(API_URL + '?t=' + Date.now());
       const data = await resp.json();
+      const now = Date.now();
 
-      // IN ASTEPTARE — doar status
+      // IN ASTEPTARE
       const waiting = data
         .filter(d => d.status === 'In asteptare' && (d.nrAuto || '').trim() !== '')
         .map(d => d.nrAuto.trim());
 
-      // FINALIZAT — status Finalizat SI nu a expirat (calcul din numar ms)
+      // FINALIZAT — doar cele care NU au depasit 5 min de la finalizatMs
       const done = data
         .filter(d => {
           if (d.status !== 'Finalizat') return false;
           if ((d.nrAuto || '').trim() === '') return false;
-          const elapsed = msDeLaFinalizare(d.finalizatMs);
-          // Fara timestamp → o aratam cu timer plin (fallback)
-          if (elapsed === null) return true;
-          // Peste 5 min de la finalizare → NU o aratam
-          return elapsed < EXPIRE_MS;
+          const ms = d.finalizatMs;
+          // Fara timestamp → aratam (fallback). Cu timestamp → doar daca < 5 min
+          if (!ms) return true;
+          return (now - ms) < EXPIRE_MS;
         })
         .map(d => ({ nrAuto: d.nrAuto.trim(), finalizatMs: d.finalizatMs }));
 
@@ -159,14 +153,14 @@
   animateProgress();
   setInterval(() => { fetchData(); animateProgress(); }, REFRESH_INTERVAL);
 
-  // Update timer bars + re-fetch la expirare
+  // Update vizual timer bars + re-fetch cand ceva expira
   setInterval(() => {
     let expirat = false;
     document.querySelectorAll('#grid-done .card').forEach(card => {
       const bar = card.querySelector('.card-timer');
       if (bar) {
         const w = parseFloat(bar.style.width);
-        if (w <= 0) expirat = true;
+        if (w <= 0.5) expirat = true;
       }
     });
     if (expirat) fetchData();
