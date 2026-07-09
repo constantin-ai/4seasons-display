@@ -99,7 +99,7 @@
   // Parseaza timestamp din coloana J: "2026-07-09 08:07:18"
   function parseFinalizat(str) {
     if (!str) return null;
-    const m = str.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+    const m = str.match(/(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})/);
     if (!m) return null;
     const [_, an, luna, zi, ora, min, sec] = m;
     return new Date(an, luna - 1, zi, ora, min, sec).getTime();
